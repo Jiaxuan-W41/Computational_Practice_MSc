@@ -31,6 +31,118 @@ def find_neighbors(positions, center_idx, cutoff, box_length):
             neighbors.append((i, displacement))
     return neighbors
 
+#for an center atom A, use find_neighbors to find all its neighbors within cutoff distance
+def find_neighbors_vectorized(positions, center_idx, cutoff, box_length):
+    """
+    Optimized neighbor search using vectorized linear algebra operations.
+    :param positions: Array of particle positions (N x 3).
+    :param center_idx: Index of the central particle.
+    :param cutoff: Cutoff distance for neighbor searching.
+    :param box_length: Length of the cubic simulation box.
+    :return: List of tuples (neighbor_idx, displacement).
+    """
+    # Get the position of the central particle
+    center = positions[center_idx]
+
+    # Calculate all displacement vectors (vectorized)
+    displacements = positions - center  # N x 3 array
+
+    # Apply periodic boundary conditions to all displacements
+    displacements = apply_pbc(displacements, box_length)  # Vectorized PBC
+
+    # Calculate distances for all particles
+    distances = np.linalg.norm(displacements, axis=1)  # Compute norms along axis 1
+
+    # Create a mask for neighbors within the cutoff, excluding the central particle itself
+    mask = (distances < cutoff) & (np.arange(len(positions)) != center_idx)
+
+    # Extract indices and displacements of neighbors
+    neighbor_indices = np.where(mask)[0]
+    neighbor_displacements = displacements[mask]
+
+    # Return a list of (neighbor_idx, displacement) tuples
+    return list(zip(neighbor_indices, neighbor_displacements))
+
+def find_neighbors_kdtree(positions, center_idx, cutoff, box_length):
+    """
+    Optimized neighbor search using scipy.spatial.KDTree.
+    :param positions: Array of particle positions (N x 3).
+    :param center_idx: Index of the central particle.
+    :param cutoff: Cutoff distance for neighbor searching.
+    :param box_length: Length of the cubic simulation box.
+    :return: List of tuples (neighbor_idx, displacement).
+    """
+    # Apply periodic boundary conditions to handle the infinite box
+    extended_positions = extend_positions_with_pbc(positions, box_length)
+
+    # Create a KDTree for fast neighbor search
+    kdtree = KDTree(extended_positions)
+
+    # Query all neighbors within the cutoff distance
+    center_pos = positions[center_idx]
+    neighbor_indices = kdtree.query_ball_point(center_pos, cutoff)
+
+    # Filter out neighbors outside the original simulation box
+    neighbors = []
+    for idx in neighbor_indices:
+        original_idx = idx % len(positions)  # Map back to original index
+        if original_idx == center_idx:
+            continue
+        displacement = apply_pbc(extended_positions[idx] - center_pos, box_length)
+        neighbors.append((original_idx, displacement))
+
+    return neighbors
+
+def find_neighbors(positions, center_idx, cutoff, box_length):
+    """
+    Optimized neighbor search using the cell-linked list method.
+    :param positions: Coordinates of all atoms.
+    :param center_idx: Index of the center atom.
+    :param cutoff: Distance threshold for neighbor detection (unit: Å).
+    :param box_length: Length of the cubic simulation box (unit: Å).
+    :return: List of neighbors (indices and relative displacements).
+    """
+    # Define cell size and number of cells
+    cell_size = cutoff
+    num_cells = int(np.floor(box_length / cell_size))
+    cell_size = box_length / num_cells
+
+    # Initialize cell-linked lists
+    cells = {}
+    for idx, pos in enumerate(positions):
+        cell_idx = tuple((pos // cell_size).astype(int) % num_cells)
+        if cell_idx not in cells:
+            cells[cell_idx] = []
+        cells[cell_idx].append(idx)
+
+    # Identify the center atom's cell
+    center_pos = positions[center_idx]
+    center_cell_idx = tuple((center_pos // cell_size).astype(int) % num_cells)
+
+    # Define neighbor cell offsets (27 neighbor cells in 3D)
+    neighbor_offsets = [
+        (x, y, z)
+        for x in (-1, 0, 1)
+        for y in (-1, 0, 1)
+        for z in (-1, 0, 1)
+    ]
+
+    # Collect neighbors
+    neighbors = []
+    for offset in neighbor_offsets:
+        neighbor_cell_idx = tuple((np.array(center_cell_idx) + np.array(offset)) % num_cells)
+        if neighbor_cell_idx in cells:
+            for neighbor_idx in cells[neighbor_cell_idx]:
+                if neighbor_idx == center_idx:
+                    continue
+                displacement = apply_pbc(positions[neighbor_idx] - center_pos, box_length)
+                distance = np.linalg.norm(displacement)
+                if distance < cutoff:
+                    neighbors.append((neighbor_idx, displacement))
+
+    return neighbors
+
+
 #Calculation of the angle between two vectors v1 and v2.
 def calculate_angle(v1, v2):
     """
