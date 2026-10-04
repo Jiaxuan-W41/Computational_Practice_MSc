@@ -1,6 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+def make_cell(a, b, c):
+    """
+    Construct a 3D periodic simulation cell from three linearly independent cell vectors(lattice vector).
+    Returns cell : ndarray, shape (3, 3)
+    Cell vectors stored as rows(row vectors).
+    """
+    cell = np.array([a, b, c], dtype=float)
+
+    if cell.shape != (3, 3):
+        raise ValueError("A 3D cell must contain three 3D vectors.")
+
+    if np.isclose(np.linalg.det(cell), 0.0):
+        raise ValueError("Cell vectors must be linearly independent.")
+
+    return cell
+
 def apply_pbc(vector, box_length):
     """
     Apply periodic boundary conditions (PBC).
